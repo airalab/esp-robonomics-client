@@ -56,13 +56,44 @@ bool getBlockHash(BlockchainUtils *blockchainUtils, int block_number, std::strin
 // Get Runtime Info
 
 bool extractRuntimeVersions(BlockchainUtils *blockchainUtils, uint32_t *specVersion, uint32_t *transactionVersion) {
+    printf("[extractRuntimeVersions] called\n");
+
     JSONVar runtimeInfo;
-    if (!getRuntimeInfo(blockchainUtils, &runtimeInfo)) return false;
+    printf("[extractRuntimeVersions] created runtimeInfo\n");
+
+    if (!getRuntimeInfo(blockchainUtils, &runtimeInfo)) {
+        printf("[extractRuntimeVersions] getRuntimeInfo FAILED\n");
+        return false;
+    }
+    printf("[extractRuntimeVersions] getRuntimeInfo OK\n");
+
+    String runtimeInfoStr = JSON.stringify(runtimeInfo);
+    printf("[extractRuntimeVersions] runtimeInfo: %s\n", runtimeInfoStr.c_str());
+
+    if (runtimeInfo.hasOwnProperty("specVersion")) {
+        printf("[extractRuntimeVersions] runtimeInfo.specVersion exists\n");
+        int spec = (int)runtimeInfo["specVersion"];
+        printf("[extractRuntimeVersions] runtimeInfo.specVersion = %d\n", spec);
+    } else {
+        printf("[extractRuntimeVersions] runtimeInfo.specVersion NOT FOUND\n");
+    }
+
+    if (runtimeInfo.hasOwnProperty("transactionVersion")) {
+        printf("[extractRuntimeVersions] runtimeInfo.transactionVersion exists\n");
+        int tx = (int)runtimeInfo["transactionVersion"];
+        printf("[extractRuntimeVersions] runtimeInfo.transactionVersion = %d\n", tx);
+    } else {
+        printf("[extractRuntimeVersions] runtimeInfo.transactionVersion NOT FOUND\n");
+    }
+
     if (runtimeInfo.hasOwnProperty("specVersion") && runtimeInfo.hasOwnProperty("transactionVersion")) {
         *specVersion = static_cast<uint32_t>((int)runtimeInfo["specVersion"]);
         *transactionVersion = static_cast<uint32_t>((int)runtimeInfo["transactionVersion"]);
+        printf("[extractRuntimeVersions] SUCCESS: specVersion=%u, transactionVersion=%u\n", *specVersion, *transactionVersion);
         return true;
     }
+
+    printf("[extractRuntimeVersions] FAILED: missing keys\n");
     return false;
 }
 
@@ -82,11 +113,20 @@ bool getRuntimeInfo(const std::string &parentBlockHash, BlockchainUtils *blockch
     paramsArray[0] = parentBlockHash.c_str();
     String message = blockchainUtils->createWebsocketMessage("state_getRuntimeVersion", paramsArray);
     JSONVar response = blockchainUtils->rpcRequest(message);
+
     if (response.hasOwnProperty("error") || !response.hasOwnProperty("result")) {
         Serial.println("Error: state_getRuntimeVersion failed");
         return false;
     }
-    *runtimeInfo = response["result"];
+
+    String resultStr = JSON.stringify(response["result"]);
+    *runtimeInfo = JSON.parse(resultStr);
+
+    if (*runtimeInfo == undefined) {
+        Serial.println("Error: JSON.parse failed in getRuntimeInfo");
+        return false;
+    }
+
     return true;
 }
 
