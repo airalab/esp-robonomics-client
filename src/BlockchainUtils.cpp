@@ -14,6 +14,14 @@ JSONVar BlockchainUtils::rpcRequest(String data) {
     return res;
 }
 
+#ifdef ROBONOMICS_USE_WS
+JSONVar BlockchainUtils::rpcRequestAndWatch(String data, uint32_t timeout_ms) {
+    JSONVar res = requestUtils.sendRequestAndWatch(data, timeout_ms);
+    requestId++;
+    return res;
+}
+#endif
+
 String BlockchainUtils::createWebsocketMessage(String method, JSONVar paramsArray) {
     JSONVar messageObject;
     messageObject["jsonrpc"] = "2.0";

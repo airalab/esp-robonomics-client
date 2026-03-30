@@ -97,3 +97,26 @@ String fillParamsJs(std::vector<uint8_t> data, uint64_t id_cnt) {
  
     return jsonString;
 }
+
+String fillParamsWatchJs(std::vector<uint8_t> data, uint64_t id_cnt) {
+    String jsonString;
+    JSONVar params;
+    std::string param0;
+
+    param0.append("0x");
+    char ch[3];
+    for (int i = 0; i < data.size(); i++) {
+        snprintf(ch, sizeof(ch), "%02x", data[i]);
+        param0.append(ch);
+    }
+    params[0] = param0.c_str();
+
+    JSONVar extrinsic;
+    extrinsic["jsonrpc"] = "2.0";
+    extrinsic["id"] = (double)id_cnt;
+    extrinsic["method"] = "author_submitAndWatchExtrinsic";
+    extrinsic["params"] = params;
+    jsonString = JSON.stringify(extrinsic);
+
+    return jsonString;
+}

@@ -3,6 +3,7 @@
 #include "address.h"
 #include <Arduino.h>
 #include <Ed25519.h>
+#include "JsonUtils.h"
 
 static const char *TAG = "ROBONOMICS";
 
@@ -77,9 +78,16 @@ const char* Robonomics::sendRWSDatalogRecord(const std::string& data, const char
     return res;
 }
 
-const char* Robonomics::createAndSendExtrinsic(Data call) {
-    const char* error_res = "error";
+#ifdef ROBONOMICS_USE_WS
+const char* Robonomics::sendRWSDatalogRecordAndWatch(const std::string& data, const char *owner_address, uint32_t timeout_ms) {
+    Data head_dr_ = Data{0x33,0};
+    Data head_rws_ = Data{0x37,0};
+    Data call_nested = callDatalogRecord(head_dr_, data);
+    RobonomicsPublicKey ownerKey = getPublicKeyFromAddr(owner_address);
+    Data call = callRws(head_rws_, ownerKey, call_nested);
 
+    // Reuse the same extrinsic construction steps, but submit with watch.
+    const char* error_res = "error";
     uint64_t payloadNonce;
     if (!getNonce(& blockchainUtils, ss58Address, &payloadNonce)) return error_res;
     std::string payloadBlockHash;
@@ -90,6 +98,47 @@ const char* Robonomics::createAndSendExtrinsic(Data call) {
     uint32_t payloadSpecVersion;
     uint32_t payloadTransactionVersion;
     if (!extractRuntimeVersions(& blockchainUtils, & payloadSpecVersion, & payloadTransactionVersion)) return error_res;
+
+    Data data_ = createPayload(call, payloadEra, payloadNonce, payloadTip, payloadSpecVersion, payloadTransactionVersion, payloadBlockHash, payloadBlockHash);
+    Data signature_ = createSignature(data_, privateKey_, publicKey_);
+    std::vector<std::uint8_t> pubKey( reinterpret_cast<std::uint8_t*>(std::begin(publicKey_)), reinterpret_cast<std::uint8_t*>(std::end(publicKey_)));
+    Data edata_ = createSignedExtrinsic(signature_, pubKey, payloadEra, payloadNonce, payloadTip, call);
+    int requestId = blockchainUtils.getRequestId();
+    return sendExtrinsicAndWatch(edata_, requestId, timeout_ms);
+}
+#endif
+
+const char* Robonomics::createAndSendExtrinsic(Data call) {
+    const char* error_res = "error";
+
+    uint64_t payloadNonce;
+    if (!getNonce(& blockchainUtils, ss58Address, &payloadNonce)) {
+        last_extrinsic_ok_ = false;
+        last_extrinsic_error_code_ = 0;
+        last_extrinsic_error_message_ = "Failed to obtain nonce (system_accountNextIndex)";
+        last_extrinsic_result_ = error_res;
+        return error_res;
+    }
+    std::string payloadBlockHash;
+    if (!getGenesisBlockHash(& blockchainUtils, &payloadBlockHash)) {
+        last_extrinsic_ok_ = false;
+        last_extrinsic_error_code_ = 0;
+        last_extrinsic_error_message_ = "Failed to obtain genesis block hash (chain_getBlockHash(0))";
+        last_extrinsic_result_ = error_res;
+        return error_res;
+    }
+    payloadBlockHash.erase(0, 2);
+    uint32_t payloadEra = getEra();
+    uint64_t payloadTip = getTip();
+    uint32_t payloadSpecVersion;
+    uint32_t payloadTransactionVersion;
+    if (!extractRuntimeVersions(& blockchainUtils, & payloadSpecVersion, & payloadTransactionVersion)) {
+        last_extrinsic_ok_ = false;
+        last_extrinsic_error_code_ = 0;
+        last_extrinsic_error_message_ = "Failed to obtain runtime versions (state_getRuntimeVersion)";
+        last_extrinsic_result_ = error_res;
+        return error_res;
+    }
     // Serial.printf("Spec version: %" PRIu32 ", tx version: %" PRIu32 ", nonce: %llu, era: %" PRIu32 ", tip: %llu\r\n", payloadSpecVersion, payloadTransactionVersion, (unsigned long long)payloadNonce, payloadEra, (unsigned long long)payloadTip);
     Data data_ = createPayload(call, payloadEra, payloadNonce, payloadTip, payloadSpecVersion, payloadTransactionVersion, payloadBlockHash, payloadBlockHash);
     Data signature_ = createSignature(data_, privateKey_, publicKey_);
@@ -161,12 +210,58 @@ const char* Robonomics::sendExtrinsic(Data extrinsicData, int requestId) {
     Serial.printf("After to string: %s\r\n", extrinsicMessage.c_str());
     // Serial.print(extrinsicMessage);
     JSONVar result = blockchainUtils.rpcRequest(extrinsicMessage);
-    String extrinsicResult;
     if (result.hasOwnProperty("result")) {
-        extrinsicResult = JSON.stringify(result["result"]);
+        last_extrinsic_result_ = JSON.stringify(result["result"]);
+        last_extrinsic_ok_ = true;
+        last_extrinsic_error_code_ = 0;
+        last_extrinsic_error_message_ = "";
     } else {
-        extrinsicResult = JSON.stringify(result["error"]);
+        last_extrinsic_result_ = JSON.stringify(result["error"]);
+        last_extrinsic_ok_ = false;
+        last_extrinsic_error_code_ = 0;
+        last_extrinsic_error_message_ = last_extrinsic_result_;
+
+        // Try to extract standard JSON-RPC error fields if present.
+        if (result.hasOwnProperty("error")) {
+            JSONVar err = result["error"];
+            if (err.hasOwnProperty("code")) {
+                last_extrinsic_error_code_ = (long)err["code"];
+            }
+            if (err.hasOwnProperty("message")) {
+                last_extrinsic_error_message_ = (const char*)err["message"];
+            }
+        }
     }
-    Serial.printf("Extrinsic result: %s", extrinsicResult.c_str());
-    return extrinsicResult.c_str();
+    Serial.printf("Extrinsic result: %s", last_extrinsic_result_.c_str());
+    return last_extrinsic_result_.c_str();
 }
+
+#ifdef ROBONOMICS_USE_WS
+const char* Robonomics::sendExtrinsicAndWatch(Data extrinsicData, int requestId, uint32_t timeout_ms) {
+    String extrinsicMessage = fillParamsWatchJs(extrinsicData, requestId);
+    Serial.printf("After to string (watch): %s\r\n", extrinsicMessage.c_str());
+
+    JSONVar watchRes = blockchainUtils.rpcRequestAndWatch(extrinsicMessage, timeout_ms);
+    last_watch_result_ = JSON.stringify(watchRes);
+
+    // Fill watch summary fields
+    last_watch_ok_ = false;
+    last_watch_status_ = "";
+    if (watchRes.hasOwnProperty("ok")) {
+        last_watch_ok_ = (bool)watchRes["ok"];
+    }
+    if (watchRes.hasOwnProperty("status")) {
+        last_watch_status_ = (const char*)watchRes["status"];
+    }
+
+    // Also map watch result into "extrinsic status" for convenience:
+    // if watch reached inBlock/finalized -> ok.
+    last_extrinsic_ok_ = last_watch_ok_;
+    if (!last_watch_ok_) {
+        last_extrinsic_error_message_ = last_watch_result_;
+    }
+
+    Serial.printf("Extrinsic watch result: %s\r\n", last_watch_result_.c_str());
+    return last_watch_result_.c_str();
+}
+#endif

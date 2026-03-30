@@ -26,3 +26,4 @@ typedef struct {
 FromJson parseJson (JSONVar val);
 String getPayloadJs (std::string account, uint64_t id_cnt);
 String fillParamsJs (std::vector<uint8_t> data, uint64_t id_cnt);
+String fillParamsWatchJs (std::vector<uint8_t> data, uint64_t id_cnt);

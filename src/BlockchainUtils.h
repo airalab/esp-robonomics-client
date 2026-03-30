@@ -9,7 +9,7 @@
 #endif
 
 #ifdef ROBONOMICS_USE_WS
-#include "requestUtils/WebsocketUtils.h"
+#include "requestUtils/WebsocketRequests.h"
 #endif
 
 class BlockchainUtils {
@@ -25,5 +25,8 @@ public:
     void disconnect();
     int getRequestId();
     JSONVar rpcRequest(String data);
+#ifdef ROBONOMICS_USE_WS
+    JSONVar rpcRequestAndWatch(String data, uint32_t timeout_ms);
+#endif
     String createWebsocketMessage(String method, JSONVar paramsArray);
 };
