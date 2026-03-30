@@ -89,7 +89,8 @@ JSONVar WebsocketRequests::sendRequestAndWatch(String message, uint32_t timeout_
 
         JSONVar r = params["result"];
         // r can be string statuses or objects {inBlock: "..."} / {finalized: "..."}.
-        if (r.is<const char*>()) {
+        const String r_type = JSON.typeof(r);
+        if (r_type == "string") {
             String status = (const char*)r;
             if (!isExtrinsicTerminalStatus(status)) return;
             out["ok"] = (status == "inBlock" || status == "finalized");
