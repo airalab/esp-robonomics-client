@@ -197,7 +197,9 @@ Data Robonomics::createSignature(Data data, uint8_t privateKey[32], uint8_t publ
 }
 
 Data Robonomics::createSignedExtrinsic(Data signature, Data pubKey, uint32_t era, uint64_t nonce, uint64_t tip, Data call) {
-    Data edata_ = doEncode (signature, pubKey, era, nonce, tip, call);
+    // Signer address is MultiAddress::AccountId(0x00 + 32-byte public key) for modern runtimes.
+    Data signerAddress = encodeAccountId(pubKey, /*raw=*/false);
+    Data edata_ = doEncode(signature, signerAddress, era, nonce, tip, call);
     Serial.printf("Extrinsic %s: size %zu\r\n", "Datalog", edata_.size());
     // for (int k = 0; k < edata_.size(); k++) 
     //     printf("%02x", edata_[k]);

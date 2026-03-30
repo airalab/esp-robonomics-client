@@ -62,13 +62,12 @@ std::vector<uint8_t> doSign(Data data, uint8_t privateKey[32], uint8_t publicKey
     return signature;
 }
 
-std::vector<uint8_t> doEncode (Data signature, Data pubKey, uint32_t era, uint64_t nonce, uint64_t tip, Data call) {
+std::vector<uint8_t> doEncode (Data signature, Data signerAddress, uint32_t era, uint64_t nonce, uint64_t tip, Data call) {
     Data edata;
     append(edata, Data{extrinsicFormat | signedBit});  // version header
-    append(edata,0);
 
-    //std::vector<std::byte> pubKey( reinterpret_cast<std::byte*>(std::begin(publicKey)), reinterpret_cast<std::byte*>(std::end(publicKey)));
-    append(edata,pubKey);  // signer public key
+    // Signer: MultiAddress (usually AccountId)
+    append(edata, signerAddress);
     append(edata, sigTypeEd25519); // signature type
     append(edata, signature);      // signatured payload
               
