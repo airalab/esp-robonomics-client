@@ -19,7 +19,8 @@
     "homepage": "https://robonomics.network/",
     "dependencies": {
       "arduino-libraries/Arduino_JSON": "0.2.0",
-      "rweather/Crypto": "0.4.0"
+      "rweather/Crypto": "0.4.0",
+      "links2004/WebSockets": "^2.6.1"
     },
     "frameworks": "*",
     "platforms": "*"
