@@ -34,7 +34,8 @@ std::vector<uint8_t> callRws (Data head, RobonomicsPublicKey owner_key, Data par
     append(call, head); 
     std::vector<uint8_t> dst(owner_key.bytes, owner_key.bytes + PUBLIC_KEY_LENGTH);
     // std::vector<uint8_t> dst = hex2bytes (owner.c_str());
-    append(call, dst);   // add owner pub key 
+    // RWS pallet expects `subscription_id: T::AccountId` (AccountId32), i.e. raw 32 bytes.
+    append(call, dst);
     append(call, param); // add nested call
     return call;
 }

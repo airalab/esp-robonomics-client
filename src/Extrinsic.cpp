@@ -1,9 +1,34 @@
 #include "Extrinsic.h"
 
+// Robonomics runtime (specVersion=42) uses TxExtension tuple (see runtime/robonomics/src/lib.rs):
+// CheckEra, CheckNonce, ChargeTransactionPayment, CheckMetadataHash
+// Many "Check*" extensions encode as empty (()), but Era/Nonce/Payment/MetadataHash do encode bytes.
+
+static inline Data encodeEraBytes(uint32_t era) {
+    // For now we only support Immortal era (single 0x00 byte).
+    // Our firmware currently passes era as a u32 from getEra(); using Immortal is enough for now.
+    (void)era;
+    return Data{0x00};
+}
+
+static inline Data encodeMetadataHashNone() {
+    // frame_metadata_hash_extension::CheckMetadataHash uses Option<H256>.
+    // None = 0x00
+    return Data{0x00};
+}
+
+static inline Data encodeChargeTransactionPayment(uint64_t tip) {
+    // Robonomics runtime expects ChargeTransactionPayment encoding with a single `tip` field.
+    // (Polkadot.js signed extrinsic shows only 1 byte tip=0x00 when tip=0.)
+    return encodeCompact(tip);
+}
+
 std::vector<uint8_t> doPayload (Data call, uint32_t era, uint64_t nonce, uint64_t tip, uint32_t sv, uint32_t tv, std::string gen, std::string block) {
     Data data;
     append(data, call);
-    append(data, encodeCompact(era)); // era; note: it simplified to encode, maybe need to rewrite
+    // SignedExtra (for payload) - only the parts that are "signed" are included here,
+    // plus additional_signed fields (specVersion/txVersion/genesis/block hash, and optionally metadata hash).
+    append(data, encodeEraBytes(era));
     // Serial.print("After era: ");
     // for (int k = 0; k < data.size(); k++) 
     //     Serial.printf("%02x", data[k]);
@@ -14,7 +39,10 @@ std::vector<uint8_t> doPayload (Data call, uint32_t era, uint64_t nonce, uint64_
     // for (int k = 0; k < data.size(); k++) 
     //     Serial.printf("%02x", data[k]);
     // Serial.println("");
-    append(data, encodeCompact(tip));
+    // ChargeTransactionPayment
+    append(data, encodeChargeTransactionPayment(tip));
+    // CheckMetadataHash extra: Option<H256>
+    append(data, encodeMetadataHashNone());
     // Serial.print("After tip: ");
     // for (int k = 0; k < data.size(); k++) 
     //     Serial.printf("%02x", data[k]);
@@ -43,6 +71,9 @@ std::vector<uint8_t> doPayload (Data call, uint32_t era, uint64_t nonce, uint64_
     // for (int k = 0; k < data.size(); k++) 
     //     Serial.printf("%02x", data[k]);
     // Serial.println("");
+
+    // CheckMetadataHash additional_signed: Option<H256>
+    append(data, encodeMetadataHashNone());
     return data;
 }
 
@@ -71,10 +102,12 @@ std::vector<uint8_t> doEncode (Data signature, Data signerAddress, uint32_t era,
     append(edata, sigTypeEd25519); // signature type
     append(edata, signature);      // signatured payload
               
-    // era / nonce / tip // append(edata, encodeEraNonceTip());
-    append(edata, encodeCompact(era)); // era; note: it simplified to encode, maybe need to rewrite
+    // SignedExtra (TxExtension):
+    // CheckEra, CheckNonce, ChargeTransactionPayment, CheckMetadataHash.
+    append(edata, encodeEraBytes(era));
     append(edata, encodeCompact(nonce));
-    append(edata, encodeCompact(tip));                            
+    append(edata, encodeChargeTransactionPayment(tip));
+    append(edata, encodeMetadataHashNone());
   
     append(edata, call);
     encodeLengthPrefix(edata); // append length
