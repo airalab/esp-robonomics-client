@@ -11,9 +11,38 @@
 #include <ESP8266HTTPClient.h>
 #endif
 
+static String normalizeRpcUrl(String input) {
+    input.trim();
+
+    // If user pasted full URL, keep scheme+path. Otherwise treat as host.
+    bool has_scheme = input.startsWith("http://") || input.startsWith("https://");
+    if (!has_scheme) {
+        // User provided host only: default to https.
+        input = "https://" + input;
+    }
+
+    // Strip trailing spaces and slashes.
+    while (input.endsWith(" ")) input.remove(input.length() - 1);
+    while (input.endsWith("/")) input.remove(input.length() - 1);
+
+    // Ensure /rpc/ suffix (Robonomics nodes serve JSON-RPC here).
+    // If already includes /rpc or /rpc/, don't duplicate.
+    if (!(input.endsWith("/rpc") || input.endsWith("/rpc/"))) {
+        input += "/rpc";
+    }
+    if (!input.endsWith("/")) input += "/";
+
+    return input;
+}
 
 void HTTPRequests::setup(String host) {
-    node_url = "http://" + host + "/rpc/";
+    // Accept both:
+    // - "polkadot.rpc.robonomics.network"
+    // - "https://polkadot-kz.rpc.robonomics.network/"
+    // - "http://.../rpc/" (may redirect to https on some mirrors)
+    node_url = normalizeRpcUrl(host);
+    Serial.print("[HTTP] RPC URL: ");
+    Serial.println(node_url);
 }
 
 void HTTPRequests::disconnect() {}
@@ -22,7 +51,30 @@ JSONVar HTTPRequests::sendRequest(String message) {
     Serial.print("[HTTP]+POST:\n"); 
     JSONVar response;
     HTTPClient http;
-    http.begin(wifi_client, node_url.c_str());
+    const bool is_https = node_url.startsWith("https://");
+
+    // Collect Location header for manual redirect retry.
+    const char* header_keys[] = {"Location"};
+    http.collectHeaders(header_keys, 1);
+
+#ifdef ESP32
+    if (is_https) {
+        secure_client_.setInsecure();
+        http.begin(secure_client_, node_url.c_str());
+    } else {
+        http.begin(plain_client_, node_url.c_str());
+    }
+#endif
+
+#ifdef ESP8266
+    if (is_https) {
+        secure_client_.setInsecure();
+        http.begin(secure_client_, node_url.c_str());
+    } else {
+        http.begin(plain_client_, node_url.c_str());
+    }
+#endif
+
     http.addHeader("Content-Type", "application/json");
     uint32_t httpCode = (uint32_t)http.POST(message);
     Serial.println("sent:");
@@ -34,6 +86,56 @@ JSONVar HTTPRequests::sendRequest(String message) {
             Serial.println("received:");
             Serial.println(payload);
             response = JSON.parse(payload);
+        } else if (httpCode == 301 || httpCode == 302 || httpCode == 307 || httpCode == 308) {
+            // Some mirrors redirect http->https or "/"->"/rpc/".
+            String location = http.header("Location");
+            if (location.length() > 0) {
+                Serial.print("[HTTP]+POST redirect Location: ");
+                Serial.println(location);
+
+                // Retry once using redirected URL (normalized to ensure /rpc/).
+                HTTPClient http2;
+                String retry_url = normalizeRpcUrl(location);
+                const bool retry_https = retry_url.startsWith("https://");
+
+                const char* header_keys2[] = {"Location"};
+                http2.collectHeaders(header_keys2, 1);
+
+#ifdef ESP32
+                if (retry_https) {
+                    secure_client_.setInsecure();
+                    http2.begin(secure_client_, retry_url.c_str());
+                } else {
+                    http2.begin(plain_client_, retry_url.c_str());
+                }
+#endif
+
+#ifdef ESP8266
+                if (retry_https) {
+                    secure_client_.setInsecure();
+                    http2.begin(secure_client_, retry_url.c_str());
+                } else {
+                    http2.begin(plain_client_, retry_url.c_str());
+                }
+#endif
+
+                http2.addHeader("Content-Type", "application/json");
+                uint32_t httpCode2 = (uint32_t)http2.POST(message);
+                Serial.printf("[HTTP]+POST retry code: %d\n", httpCode2);
+                if (httpCode2 == HTTP_CODE_OK) {
+                    const String& payload2 = http2.getString();
+                    Serial.println("received:");
+                    Serial.println(payload2);
+                    response = JSON.parse(payload2);
+                } else {
+                    Serial.println("HTTP response is not 200 (after redirect retry)");
+                    response["error"] = httpCode2;
+                }
+                http2.end();
+            } else {
+                Serial.println("HTTP response is redirect but no Location header");
+                response["error"] = httpCode;
+            }
         } else {
             Serial.println("HTTP response is not 200");
             response["error"] = httpCode;
@@ -42,6 +144,7 @@ JSONVar HTTPRequests::sendRequest(String message) {
         Serial.println("HTTP response is 0");
         response["error"] = httpCode;
     }
+    http.end();
     return response;
 }
 
