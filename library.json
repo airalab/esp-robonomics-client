@@ -1,6 +1,6 @@
 {
     "name": "ESPRobonomicsClient",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "description": "Build, sign and submit selected Robonomics parachain extrinsics from ESP devices",
     "keywords": "robonomics, polkadot, kusama, blockchain, substrate",
     "repository":

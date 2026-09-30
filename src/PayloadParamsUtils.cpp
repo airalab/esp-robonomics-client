@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include "PayloadParamsUtils.h"
+#include "Encoder.h"
+#include "Utils.h"
 #include <string>
 
 JSONVar emptyParamsArray;
@@ -206,4 +208,111 @@ bool getParentBlockHash(const std::string &chainHead, BlockchainUtils *blockchai
     Serial.println(parent_hash);
     *parentBlockHash = std::string(parent_hash);
     return true;
+}
+
+bool getCpsNextNodeId(BlockchainUtils *blockchainUtils, uint64_t *nextNodeId) {
+    // twox128("CPS") ++ twox128("NextNodeId")
+    static const char* kCpsNextNodeIdStorageKey =
+        "0xdb6896c9bb994c147900aa01be78053f4b133581ee4a756f2e94fb93589bbf4d";
+
+    paramsArray[0] = kCpsNextNodeIdStorageKey;
+    String message = blockchainUtils->createWebsocketMessage("state_getStorage", paramsArray);
+    JSONVar response = blockchainUtils->rpcRequest(message);
+    if (response.hasOwnProperty("error") || !response.hasOwnProperty("result")) {
+        return false;
+    }
+
+    JSONVar result = response["result"];
+    if (result == undefined) {
+        *nextNodeId = 0;
+        return true;
+    }
+
+    const String resultStr = JSON.stringify(result);
+    if (resultStr == "null" || resultStr.length() == 0) {
+        *nextNodeId = 0;
+        return true;
+    }
+
+    const char* encoded = (const char*)result;
+    if (encoded == nullptr || encoded[0] == '\0') {
+        *nextNodeId = 0;
+        return true;
+    }
+
+    std::string hex(encoded);
+    if (hex.size() >= 2 && hex[0] == '0' && (hex[1] == 'x' || hex[1] == 'X')) {
+        hex = hex.substr(2);
+    }
+    if (hex.empty()) {
+        *nextNodeId = 0;
+        return true;
+    }
+
+    const Data bytes = hex2bytes(hex);
+    size_t offset = 0;
+    uint64_t decoded = 0;
+    if (!decodeCompact(bytes, offset, decoded) || offset != bytes.size()) {
+        return false;
+    }
+    *nextNodeId = decoded;
+    return true;
+}
+
+bool getRuntimeMetadataHash(BlockchainUtils *blockchainUtils, Data *metadataHash) {
+    static bool cached = false;
+    static Data cached_hash;
+    static unsigned long cached_at_ms = 0;
+    static const unsigned long kCacheTtlMs = 60UL * 60UL * 1000UL;
+
+    if (metadataHash == nullptr) {
+        return false;
+    }
+    metadataHash->clear();
+
+    if (cached && cached_at_ms != 0 && (millis() - cached_at_ms) < kCacheTtlMs && cached_hash.size() == 32) {
+        *metadataHash = cached_hash;
+        return true;
+    }
+
+    JSONVar callParams;
+    callParams[0] = "MetadataHash_metadata_hash";
+    callParams[1] = "0x";
+    String message = blockchainUtils->createWebsocketMessage("state_call", callParams);
+    JSONVar response = blockchainUtils->rpcRequest(message);
+    if (response.hasOwnProperty("error") || !response.hasOwnProperty("result")) {
+        callParams[0] = "Metadata_metadata_hash";
+        message = blockchainUtils->createWebsocketMessage("state_call", callParams);
+        response = blockchainUtils->rpcRequest(message);
+    }
+    if (response.hasOwnProperty("error") || !response.hasOwnProperty("result")) {
+        return false;
+    }
+
+    JSONVar result = response["result"];
+    if (result == undefined) {
+        return false;
+    }
+    const char* encoded = (const char*)result;
+    if (encoded == nullptr || encoded[0] == '\0') {
+        return false;
+    }
+
+    std::string hex(encoded);
+    if (hex.size() >= 2 && hex[0] == '0' && (hex[1] == 'x' || hex[1] == 'X')) {
+        hex = hex.substr(2);
+    }
+    Data bytes = hex2bytes(hex);
+    if (bytes.size() == 33 && bytes[0] == 0x01) {
+        metadataHash->assign(bytes.begin() + 1, bytes.end());
+    } else if (bytes.size() == 32) {
+        *metadataHash = bytes;
+    } else {
+        return false;
+    }
+
+    cached_hash = *metadataHash;
+    cached = true;
+    cached_at_ms = millis();
+    return metadataHash->size() == 32;
 }

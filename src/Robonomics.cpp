@@ -103,6 +103,50 @@ const char* Robonomics::sendRWSSetDevices(const std::vector<std::string>& device
     return createAndSendExtrinsic(call);
 }
 
+const char* Robonomics::sendCpsCreateNode(
+    bool has_parent,
+    uint64_t parent_id,
+    const std::string& meta,
+    const std::string& payload
+) {
+    last_cps_node_id_ok_ = false;
+    last_cps_node_id_ = 0;
+
+    Data head_cps_create_node_ = Data{kCpsPalletIndex, kCpsCreateNodeCallIndex};
+    const uint8_t* meta_bytes = meta.empty() ? nullptr : reinterpret_cast<const uint8_t*>(meta.data());
+    const uint8_t* payload_bytes = payload.empty() ? nullptr : reinterpret_cast<const uint8_t*>(payload.data());
+    Data call = callCpsCreateNode(
+        head_cps_create_node_,
+        has_parent,
+        parent_id,
+        meta_bytes,
+        meta.size(),
+        payload_bytes,
+        payload.size()
+    );
+    if (call.empty()) {
+        return setLocalExtrinsicError("Failed to encode CPS create_node call");
+    }
+
+    uint32_t specVersion = 0;
+    uint32_t transactionVersion = 0;
+    if (!extractRuntimeVersions(&blockchainUtils, &specVersion, &transactionVersion)) {
+        return setLocalExtrinsicError("Failed to obtain runtime versions (state_getRuntimeVersion)");
+    }
+    if (specVersion < 51) {
+        return setLocalExtrinsicError("CPS create_node requires runtime spec_version >= 51");
+    }
+
+    uint64_t next_node_id = 0;
+    const bool have_next_id = getCpsNextNodeId(&blockchainUtils, &next_node_id);
+    const char* result = createAndSendExtrinsic(call);
+    if (last_extrinsic_ok_ && have_next_id) {
+        last_cps_node_id_ok_ = true;
+        last_cps_node_id_ = next_node_id;
+    }
+    return result;
+}
+
 #ifdef ROBONOMICS_USE_WS
 const char* Robonomics::sendRWSDatalogRecordAndWatch(const std::string& data, const char *owner_address, uint32_t timeout_ms) {
     Data head_dr_ = Data{0x33,0};
@@ -124,10 +168,12 @@ const char* Robonomics::sendRWSDatalogRecordAndWatch(const std::string& data, co
     uint32_t payloadTransactionVersion;
     if (!extractRuntimeVersions(& blockchainUtils, & payloadSpecVersion, & payloadTransactionVersion)) return error_res;
 
-    Data data_ = createPayload(call, payloadEra, payloadNonce, payloadTip, payloadSpecVersion, payloadTransactionVersion, payloadBlockHash, payloadBlockHash);
+    Data metadataHash;
+    getRuntimeMetadataHash(&blockchainUtils, &metadataHash);
+    Data data_ = createPayload(call, payloadEra, payloadNonce, payloadTip, payloadSpecVersion, payloadTransactionVersion, payloadBlockHash, payloadBlockHash, metadataHash);
     Data signature_ = createSignature(data_, privateKey_, publicKey_);
     std::vector<std::uint8_t> pubKey( reinterpret_cast<std::uint8_t*>(std::begin(publicKey_)), reinterpret_cast<std::uint8_t*>(std::end(publicKey_)));
-    Data edata_ = createSignedExtrinsic(signature_, pubKey, payloadEra, payloadNonce, payloadTip, call);
+    Data edata_ = createSignedExtrinsic(signature_, pubKey, payloadEra, payloadNonce, payloadTip, call, metadataHash);
     int requestId = blockchainUtils.getRequestId();
     return sendExtrinsicAndWatch(edata_, requestId, timeout_ms);
 }
@@ -172,11 +218,12 @@ const char* Robonomics::createAndSendExtrinsic(Data call) {
         last_extrinsic_result_ = error_res;
         return error_res;
     }
-    // Serial.printf("Spec version: %" PRIu32 ", tx version: %" PRIu32 ", nonce: %llu, era: %" PRIu32 ", tip: %llu\r\n", payloadSpecVersion, payloadTransactionVersion, (unsigned long long)payloadNonce, payloadEra, (unsigned long long)payloadTip);
-    Data data_ = createPayload(call, payloadEra, payloadNonce, payloadTip, payloadSpecVersion, payloadTransactionVersion, payloadBlockHash, payloadBlockHash);
+    Data metadataHash;
+    getRuntimeMetadataHash(&blockchainUtils, &metadataHash);
+    Data data_ = createPayload(call, payloadEra, payloadNonce, payloadTip, payloadSpecVersion, payloadTransactionVersion, payloadBlockHash, payloadBlockHash, metadataHash);
     Data signature_ = createSignature(data_, privateKey_, publicKey_);
     std::vector<std::uint8_t> pubKey( reinterpret_cast<std::uint8_t*>(std::begin(publicKey_)), reinterpret_cast<std::uint8_t*>(std::end(publicKey_)));
-    Data edata_ = createSignedExtrinsic(signature_, pubKey, payloadEra, payloadNonce, payloadTip, call);
+    Data edata_ = createSignedExtrinsic(signature_, pubKey, payloadEra, payloadNonce, payloadTip, call, metadataHash);
     int requestId = blockchainUtils.getRequestId();
     const char* res = sendExtrinsic(edata_, requestId);
     return res;
@@ -211,12 +258,9 @@ Data Robonomics::createCall() {
     return call;
 }
 
-Data Robonomics::createPayload(Data call, uint32_t era, uint64_t nonce, uint64_t tip, uint32_t sv, uint32_t tv, std::string gen, std::string block) {
-    Data data_ = doPayload (call, era, nonce, tip, sv, tv, gen, block);
+Data Robonomics::createPayload(Data call, uint32_t era, uint64_t nonce, uint64_t tip, uint32_t sv, uint32_t tv, std::string gen, std::string block, const Data& metadataHash) {
+    Data data_ = doPayload(call, era, nonce, tip, sv, tv, gen, block, metadataHash);
     Serial.printf("Payload size: %zu\r\n", data_.size());
-    // for (int k = 0; k < data_.size(); k++) 
-    //     printf("%02x", data_[k]);
-    // printf("\r\n");
     return data_;
 }
 
@@ -229,14 +273,13 @@ Data Robonomics::createSignature(Data data, uint8_t privateKey[32], uint8_t publ
     return signature_;
 }
 
-Data Robonomics::createSignedExtrinsic(Data signature, Data pubKey, uint32_t era, uint64_t nonce, uint64_t tip, Data call) {
-    // Signer address is MultiAddress::AccountId(0x00 + 32-byte public key) for modern runtimes.
+Data Robonomics::createSignedExtrinsic(Data signature, Data pubKey, uint32_t era, uint64_t nonce, uint64_t tip, Data call, const Data& metadataHash) {
     Data signerAddress = encodeAccountId(pubKey, /*raw=*/false);
-    Data edata_ = doEncode(signature, signerAddress, era, nonce, tip, call);
-    Serial.printf("Extrinsic %s: size %zu\r\n", "Datalog", edata_.size());
-    // for (int k = 0; k < edata_.size(); k++) 
-    //     printf("%02x", edata_[k]);
-    // printf("\r\n");
+    Data edata_ = doEncode(signature, signerAddress, era, nonce, tip, call, metadataHash);
+    Serial.printf("Extrinsic %s: size %zu metadata_hash=%s\r\n",
+        "signed",
+        edata_.size(),
+        metadataHash.size() == 32 ? "enabled" : "disabled");
     return edata_;
 }
 

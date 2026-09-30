@@ -23,6 +23,7 @@ bool encodeRawAccount(TWSS58AddressType network, uint32_t specVersion);
 void encode32LE(uint32_t val, std::vector<uint8_t>& data);
 // only up to uint64_t
 Data encodeCompact(uint64_t value);
+bool decodeCompact(const Data& data, size_t& offset, uint64_t& value);
 Data encodeAccountId(const Data& bytes, bool raw);
 void encodeLengthPrefix(Data& data);
 uint32_t swapU16 (uint32_t value);

@@ -52,6 +52,56 @@ Data encodeCompact(uint64_t value) {
     }
 }
 
+bool decodeCompact(const Data& data, size_t& offset, uint64_t& value) {
+    if (offset >= data.size()) {
+        return false;
+    }
+
+    const uint8_t first = data[offset];
+    const uint8_t mode = first & 0x03;
+    if (mode == 0) {
+        value = static_cast<uint64_t>(first >> 2);
+        offset += 1;
+        return true;
+    }
+    if (mode == 1) {
+        if (offset + 2 > data.size()) {
+            return false;
+        }
+        const uint16_t packed =
+            static_cast<uint16_t>(data[offset]) |
+            (static_cast<uint16_t>(data[offset + 1]) << 8);
+        value = static_cast<uint64_t>(packed >> 2);
+        offset += 2;
+        return true;
+    }
+    if (mode == 2) {
+        if (offset + 4 > data.size()) {
+            return false;
+        }
+        const uint32_t packed =
+            static_cast<uint32_t>(data[offset]) |
+            (static_cast<uint32_t>(data[offset + 1]) << 8) |
+            (static_cast<uint32_t>(data[offset + 2]) << 16) |
+            (static_cast<uint32_t>(data[offset + 3]) << 24);
+        value = static_cast<uint64_t>(packed >> 2);
+        offset += 4;
+        return true;
+    }
+
+    const size_t extra_bytes = static_cast<size_t>(first >> 2) + 4;
+    if (extra_bytes > 8 || offset + 1 + extra_bytes > data.size()) {
+        return false;
+    }
+    uint64_t decoded = 0;
+    for (size_t i = 0; i < extra_bytes; ++i) {
+        decoded |= static_cast<uint64_t>(data[offset + 1 + i]) << (8 * i);
+    }
+    value = decoded;
+    offset += 1 + extra_bytes;
+    return true;
+}
+
 Data encodeAccountId(const Data& bytes, bool raw) {
     auto data = Data{};
     if (!raw) {

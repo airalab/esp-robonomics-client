@@ -23,12 +23,14 @@ private:
     String last_watch_result_;
     bool last_watch_ok_ = false;
     String last_watch_status_;
+    bool last_cps_node_id_ok_ = false;
+    uint64_t last_cps_node_id_ = 0;
     const char* setLocalExtrinsicError(const String& message);
     const char* createAndSendExtrinsic(Data call);
     Data createCall();
-    Data createPayload(Data call, uint32_t era, uint64_t nonce, uint64_t tip, uint32_t sv, uint32_t tv, std::string gen, std::string block);
+    Data createPayload(Data call, uint32_t era, uint64_t nonce, uint64_t tip, uint32_t sv, uint32_t tv, std::string gen, std::string block, const Data& metadataHash);
     Data createSignature(Data data, uint8_t privateKey[32], uint8_t publicKey[32]);
-    Data createSignedExtrinsic(Data signature, Data pubKey, uint32_t era, uint64_t nonce, uint64_t tip, Data call);
+    Data createSignedExtrinsic(Data signature, Data pubKey, uint32_t era, uint64_t nonce, uint64_t tip, Data call, const Data& metadataHash);
     const char* sendExtrinsic(Data extrinsicData, int requestId);
 #ifdef ROBONOMICS_USE_WS
     const char* sendExtrinsicAndWatch(Data extrinsicData, int requestId, uint32_t timeout_ms);
@@ -42,6 +44,15 @@ public:
     const char* sendDatalogRecord(const std::string& data);
     const char* sendRWSDatalogRecord(const std::string& data, const char *owner_address);
     const char* sendRWSSetDevices(const std::vector<std::string>& deviceAddresses);
+    // CPS create_node for runtime spec_version >= 51.
+    // Empty meta/payload are encoded as None. Assigned NodeId is a best-effort
+    // snapshot of CPS::NextNodeId taken before submit.
+    const char* sendCpsCreateNode(
+        bool has_parent,
+        uint64_t parent_id,
+        const std::string& meta,
+        const std::string& payload
+    );
     const char* sendCustomCall();
     const char* getSs58Address() const;
     const char* getPrivateKey() const;
@@ -58,6 +69,8 @@ public:
     bool lastWatchOk() const { return last_watch_ok_; }
     const char* lastWatchStatus() const { return last_watch_status_.c_str(); }
     const char* lastWatchResult() const { return last_watch_result_.c_str(); }
+    bool lastCpsNodeIdOk() const { return last_cps_node_id_ok_; }
+    uint64_t lastCpsNodeId() const { return last_cps_node_id_; }
 
 #ifdef ROBONOMICS_USE_WS
     // Submit extrinsic and wait for inBlock/finalized/terminal failure.

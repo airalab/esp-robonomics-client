@@ -2,6 +2,7 @@
 
 #include "JsonUtils.h"
 #include "BlockchainUtils.h"
+#include "Data.h"
 
 uint32_t getEra();
 uint64_t getTip();
@@ -14,4 +15,8 @@ bool getRuntimeInfo(BlockchainUtils *blockchainUtils, JSONVar *runtimeInfo);
 bool getRuntimeInfo(const std::string &parentBlockHash, BlockchainUtils *blockchainUtils, JSONVar *runtimeInfo);
 bool getChainHead(BlockchainUtils *blockchainUtils, std::string *chainHead);
 bool getParentBlockHash(const std::string &chainHead, BlockchainUtils *blockchainUtils, std::string *parentBlockHash);
+bool getCpsNextNodeId(BlockchainUtils *blockchainUtils, uint64_t *nextNodeId);
+// RFC-78 merkleized metadata hash used by CheckMetadataHash Mode::Enabled.
+// Returns false if the node does not expose it; caller must then use Mode::Disabled.
+bool getRuntimeMetadataHash(BlockchainUtils *blockchainUtils, Data *metadataHash);
 

@@ -30,6 +30,7 @@ The code supports Arduino-compatible ESP32 and ESP8266 projects.
 - Send `datalog.record(data)`.
 - Send `rws.call(owner, datalog.record(data))`.
 - Send legacy `rws.set_devices(devices)`.
+- Send `cps.create_node` for runtime spec 51 (`sendCpsCreateNode`).
 - Optionally use WebSocket transport for
   `author_submitAndWatchExtrinsic`.
 
@@ -194,6 +195,54 @@ This enables a simple onboarding flow:
    discovered companion devices.
 4. A legacy RWS subscription can later be associated with the signer account.
 
+## Create a CPS Node (spec 51)
+
+`sendCpsCreateNode(...)` submits:
+
+```text
+Cps.create_node(parent_id, meta, payload)
+```
+
+This encoder matches Robonomics runtime **spec_version 51**:
+
+- pallet index `57` / `0x39`
+- call index `0`
+- `NodeId` as compact `u64`
+- `meta` / `payload` as `Option<BoundedVec<u8>>` (1 KiB / 8 KiB)
+
+Do not send this call to a network below spec 51. On Polkadot Robonomics
+spec 51 is live; Kusama remains on 49.
+
+Example, root node with optional meta:
+
+```cpp
+const char* result = robonomics.sendCpsCreateNode(
+    false,
+    0,
+    "altruist",
+    ""
+);
+if (robonomics.lastExtrinsicOk() && robonomics.lastCpsNodeIdOk()) {
+    Serial.printf("NodeId: %llu\r\n",
+        static_cast<unsigned long long>(robonomics.lastCpsNodeId()));
+}
+```
+
+Child node:
+
+```cpp
+uint64_t parent = 0;
+const char* result = robonomics.sendCpsCreateNode(true, parent, "", "");
+```
+
+Important behavior:
+
+- Empty `meta` / `payload` strings are encoded as `None`.
+- The signer pays the normal transaction fee.
+- The assigned `NodeId` is a snapshot of `CPS::NextNodeId` taken before submit. Concurrent `create_node` calls can make this value stale; parse `NodeCreated` after `inBlock` when a watch API is available.
+- The client refuses the call if `state_getRuntimeVersion.specVersion < 51`.
+- This does not replace `sendRWSSetDevices(...)`. RWS device lists and CPS node ids are different layers.
+
 ## Submission Result
 
 Submission methods return the RPC result as `const char*`. Additional status
@@ -220,8 +269,11 @@ robonomics.lastExtrinsicResult();
 ## Known Limitations
 
 - Runtime call indices and signed extensions are manually encoded.
-- The current extrinsic builder is not compatible with the Robonomics
-  `feat/rws2_0` signed extension layout.
+- Signed extras follow Robonomics spec 51 `TxExtension`: empty checks add
+  no bytes; `CheckMetadataHash` extra is `Mode`, and the 32-byte runtime
+  metadata hash is implicit-only when Mode is Enabled.
+- `cps.create_node` is a hand-rolled encoder for spec 51, not the future
+  `embed-api` / `embed-codegen` path.
 - Only Ed25519 signing is supported.
 - `setPrivateKey(const char*)` currently requires exactly `64` hex characters
   without a `0x` prefix and does not yet return a validation error.
@@ -248,6 +300,15 @@ const char* sendRWSDatalogRecord(
 const char* sendRWSSetDevices(
     const std::vector<std::string>& deviceAddresses
 );
+const char* sendCpsCreateNode(
+    bool hasParent,
+    uint64_t parentId,
+    const std::string& meta,
+    const std::string& payload
+);
+
+bool lastCpsNodeIdOk() const;
+uint64_t lastCpsNodeId() const;
 ```
 
 ## License
